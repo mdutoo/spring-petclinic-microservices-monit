@@ -1,0 +1,19 @@
+filebeat.inputs:
+- type: container
+  enabled: true
+  paths:
+    - /var/lib/docker/containers/*/*.log
+  processors:
+    - add_docker_metadata:
+        host: "unix:///var/run/docker.sock"
+    - add_host_metadata:
+    - add_cloud_metadata:
+  # else filebeat sends to elasticsearch each line of the stacktrace as a separate log because split so in Docker JSON logs :
+  # {"log":"\u0009at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)\n","stream":"stdout","time":"2026-07-14T16:20:32.284434978Z"}
+  multiline.pattern: '^[[:space:]]'
+  multiline.negate: false
+  multiline.match: after
+output.elasticsearch:
+  hosts: ["elasticsearch:9200"]
+setup.kibana:
+  host: "kibana:5601"

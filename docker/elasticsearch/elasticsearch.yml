@@ -1,0 +1,5 @@
+cluster.name: "docker-cluster"
+network.host: 0.0.0.0
+# else with docker memory limits error : flood stage disk watermark [95%] exceeded all indices on this node will be marked read-only
+# https://stackoverflow.com/questions/63880017/elasticsearch-docker-flood-stage-disk-watermark-95-exceeded
+cluster.routing.allocation.disk.threshold_enabled: false

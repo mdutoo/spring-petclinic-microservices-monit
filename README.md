@@ -1,3 +1,37 @@
+Extends spring-petclinic-microservices with a metrics & logs monitoring platform
+for IT operations troubleshooting training purposes.
+- Includes realistic user load simulation.
+- Optimized to consume less memory (works with 32GB RAM)
+
+### start :
+
+```bash
+docker compose up -d && docker compose exec elasticsearch chown elasticsearch /usr/share/elasticsearch/data
+# else error java.nio.file.AccessDeniedException: /usr/share/elasticsearch/data/nodes
+# Add load stress tools :
+docker compose exec visits-service sh -c "apt update && apt -y install iproute2" # for tc
+docker compose exec admin-server sh -c "apt update && apt -y install stress-ng -y"
+# Load simulation (normal, else "charge") :
+docker exec -e MODE=normal k6 k6 run /scripts/petclinic.js
+```
+
+=>
+- Pet Clinic app http://localhost:8080 (api-gateway actually)
+- admin server (displays services health) : http://localhost:9090
+- grafana : http://localhost:3030
+- http://localhost:3030/dashboards => PetClinic Diagnostic dashboard
+  - NB. prometheus : http://localhost:9091
+- Kibana : http://localhost:5601
+  - NB. Elasticsearch : http://localhost:9200
+
+
+
+------
+
+**ORIGINAL README**
+
+
+
 # Distributed version of the Spring PetClinic Sample Application built with Spring Cloud and Spring AI
 
 [![Build Status](https://github.com/spring-petclinic/spring-petclinic-microservices/actions/workflows/maven-build.yml/badge.svg)](https://github.com/spring-petclinic/spring-petclinic-microservices/actions/workflows/maven-build.yml)

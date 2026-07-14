@@ -1,3 +1,7 @@
+# Extends spring-petclinic-microservices with a metrics & logs monitoring platform
+# for IT operations troubleshooting training purposes.
+# Includes realistic user load simulation.
+# Optimized to consume less memory (works with 32GB RAM)
 services:
   config-server:
     image: springcommunity/spring-petclinic-config-server
@@ -5,7 +9,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 256M
     healthcheck:
       test: ["CMD", "curl", "-I", "http://config-server:8888"]
       interval: 5s
@@ -13,6 +17,8 @@ services:
       retries: 10
     ports:
      - 8888:8888
+    networks:
+      - petclinic
 
   discovery-server:
     image: springcommunity/spring-petclinic-discovery-server
@@ -20,7 +26,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 256M
     healthcheck:
       test: ["CMD", "curl", "-f", "http://discovery-server:8761"]
       interval: 5s
@@ -31,6 +37,8 @@ services:
         condition: service_healthy
     ports:
      - 8761:8761
+    networks:
+      - petclinic
 
   customers-service:
     image: springcommunity/spring-petclinic-customers-service
@@ -38,7 +46,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 384M
     depends_on:
       config-server:
         condition: service_healthy
@@ -46,14 +54,18 @@ services:
         condition: service_healthy
     ports:
     - 8081:8081
+    networks:
+      - petclinic
 
   visits-service:
     image: springcommunity/spring-petclinic-visits-service
     container_name: visits-service
+    cap_add:
+      - NET_ADMIN # else tc error RTNETLINK answers: Operation not permitted
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 384M
     depends_on:
       config-server:
         condition: service_healthy
@@ -61,6 +73,8 @@ services:
         condition: service_healthy
     ports:
      - 8082:8082
+    networks:
+      - petclinic
 
   vets-service:
     image: springcommunity/spring-petclinic-vets-service
@@ -68,7 +82,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 384M
     depends_on:
       config-server:
         condition: service_healthy
@@ -76,9 +90,13 @@ services:
         condition: service_healthy
     ports:
      - 8083:8083
+    networks:
+      - petclinic
 
 
   genai-service:
+    profiles:
+      - donotstart # spare memory...
     image: springcommunity/spring-petclinic-genai-service
     container_name: genai-service
     environment:
@@ -88,7 +106,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 384M
     depends_on:
       config-server:
         condition: service_healthy
@@ -96,6 +114,8 @@ services:
         condition: service_healthy
     ports:
      - 8084:8084
+    networks:
+      - petclinic
 
 
   api-gateway:
@@ -104,7 +124,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 384M
     depends_on:
       config-server:
         condition: service_healthy
@@ -112,16 +132,22 @@ services:
         condition: service_healthy
     ports:
      - 8080:8080
+    networks:
+      - petclinic
 
   tracing-server:
+    profiles:
+      - donotstart # spare memory...
     image: openzipkin/zipkin
     container_name: tracing-server
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 384M
     ports:
      - 9411:9411
+    networks:
+      - petclinic
 
   admin-server:
     image: springcommunity/spring-petclinic-admin-server
@@ -129,7 +155,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 384M
     depends_on:
       config-server:
         condition: service_healthy
@@ -137,18 +163,29 @@ services:
         condition: service_healthy
     ports:
      - 9090:9090
+    networks:
+      - petclinic
 
-  ## Grafana / Prometheus
+  ## Grafana / Prometheus metrics monitoring
 
   grafana-server:
-    build: ./docker/grafana
+    #build: ./docker/grafana
+    # recent image (rather than 5.x)
+    image: grafana/grafana:10.4.8
     container_name: grafana-server
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 192M # /53-173 # 256M
     ports:
     - 3030:3000
+    volumes:
+      # required since no Dockerfile (to get a recent image) (nothing lost anyway)
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+      - ./docker/grafana/grafana.ini:/etc/grafana/grafana.ini
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - petclinic
 
   prometheus-server:
     build: ./docker/prometheus
@@ -156,6 +193,93 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 256M # /30-84
     ports:
     - 9091:9090
+    networks:
+      - petclinic
+
+  # ELK-like logs centralization :
+      
+  elasticsearch:
+    # For a simple local training platform, Elastic 8 would make it harder to work with since it brings a lot of out of the box security (certs, accounts, bootstrap...)
+    # WHEN STARTING RUN : docker compose exec elasticsearch chown elasticsearch /usr/share/elasticsearch/data
+    # else error java.nio.file.AccessDeniedException: /usr/share/elasticsearch/data/nodes
+    # see below various unconclusive solutions taken from https://stackoverflow.com/questions/40462189/docker-compose-set-user-and-group-on-mounted-volume
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.24
+    container_name: elasticsearch
+    deploy:
+      resources:
+        limits:
+          memory: 1400M # (> double of Xmx) else may crash computer
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m # ou 256 "conservateur"
+    ports:
+      - "9200:9200"
+    #user: "0:0" # "${UID}:${GID}" KO from https://stackoverflow.com/a/56904335
+    #user: "1000:1000"
+    #user: "elasticsearch:elasticsearch"
+    volumes:
+      # to solve with docker memory limits error : flood stage disk watermark [95%] exceeded all indices on this node will be marked read-only
+      - ./docker/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+      #- ./volumes/elasticsearch/data:/var/lib/elasticsearch/data # NOOO for elasticsearch 7 https://stackoverflow.com/questions/65668188/elastic-search-accessdeniedexception-usr-share-elasticsearch-data-nodes-0-a#comment131619245_71487266
+      #- ./volumes/elasticsearch/data:/usr/share/elasticsearch/data:rw
+      - ./volumes/elasticsearch/data:/usr/share/elasticsearch/data
+    #post-start: # requires docker compose 2.30 (currently 2.28)
+    #  - command: ./setupApacheRights.sh # chown elasticsearch /usr/share/elasticsearch/data # else error java.nio.file.AccessDeniedException: /usr/share/elasticsearch/data/nodes
+    networks:
+      - petclinic
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.24
+    container_name: kibana
+    deploy:
+      resources:
+        limits:
+          memory: 1000M
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    networks:
+      - petclinic
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:7.17.24
+    container_name: filebeat
+    deploy:
+      resources:
+        limits:
+          memory: 256M # /45 # 512M
+    user: root
+    command: filebeat -e --strict.perms=false
+    volumes:
+      # so that Filebeat auto  discovers all containers :
+      # (Filebeat can read docker JSON logs)
+      - ./docker/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - elasticsearch
+    networks:
+      - petclinic
+      
+  # realistic user load simulation
+  k6:
+    image: grafana/k6:latest
+    container_name: k6
+    working_dir: /scripts
+    volumes:
+      - ./docker/k6:/scripts
+    networks:
+      - petclinic
+    #command: sleep infinity # else error unknown command \"sleep\" for \"k6\""
+    entrypoint: sleep infinity
+
+networks:
+  # for simpler Filebeat conf : (and on all services)
+  petclinic:
+    driver: bridge
